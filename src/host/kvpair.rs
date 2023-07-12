@@ -6,7 +6,8 @@ use halo2_proofs::pairing::bn256::Fr;
 use lazy_static;
 use mongodb::bson::{spec::BinarySubtype, Bson};
 use mongodb::options::DropCollectionOptions;
-use mongodb::{bson::doc, Client};
+use mongodb::{bson::doc};
+use mongodb::sync::Client;
 use serde::{
     de::{Error, Unexpected},
     Deserialize, Deserializer, Serialize, Serializer,
@@ -49,24 +50,24 @@ pub struct MongoMerkle {
     default_hash: Vec<[u8; 32]>,
 }
 
-pub async fn get_collection<T>(
+pub fn get_collection<T>(
     client: &Client,
     database: String,
     name: String,
-) -> Result<mongodb::Collection<T>, mongodb::error::Error> {
+) -> Result<mongodb::sync::Collection<T>, mongodb::error::Error> {
     let database = client.database(database.as_str());
     let collection = database.collection::<T>(name.as_str());
     Ok(collection)
 }
 
-pub async fn drop_collection<T>(
+pub fn drop_collection<T>(
     client: &Client,
     database: String,
     name: String,
 ) -> Result<(), mongodb::error::Error> {
-    let collection = get_collection::<MerkleRecord>(client, database, name).await?;
+    let collection = get_collection::<MerkleRecord>(client, database, name)?;
     let options = DropCollectionOptions::builder().build();
-    collection.drop(options).await
+    collection.drop(options)
 }
 
 impl MongoMerkle {
@@ -77,32 +78,32 @@ impl MongoMerkle {
         return "zkwasmkvpair".to_string();
     }
 
-    pub async fn get_record(
+    pub fn get_record(
         &self,
         index: u32,
         hash: &[u8; 32],
     ) -> Result<Option<MerkleRecord>, mongodb::error::Error> {
         let dbname = Self::get_db_name();
         let cname = self.get_collection_name();
-        let collection = get_collection::<MerkleRecord>(&self.client, dbname, cname).await?;
+        let collection = get_collection::<MerkleRecord>(&self.client, dbname, cname)?;
         let mut filter = doc! {};
         filter.insert("index", index);
         filter.insert("hash", bytes_to_bson(hash));
-        collection.find_one(filter, None).await
+        collection.find_one(filter, None)
     }
 
     /* We always insert new record as there might be uncommitted update to the merkle tree */
-    pub async fn update_record(&self, record: MerkleRecord) -> Result<(), mongodb::error::Error> {
+    pub fn update_record(&self, record: MerkleRecord) -> Result<(), mongodb::error::Error> {
         let dbname = Self::get_db_name();
         let cname = self.get_collection_name();
-        let collection = get_collection::<MerkleRecord>(&self.client, dbname, cname).await?;
+        let collection = get_collection::<MerkleRecord>(&self.client, dbname, cname)?;
         let mut filter = doc! {};
         filter.insert("index", record.index);
         filter.insert("hash", bytes_to_bson(&record.hash));
-        let exists = collection.find_one(filter, None).await?;
+        let exists = collection.find_one(filter, None)?;
         exists.map_or(
             {
-                collection.insert_one(record, None).await?;
+                collection.insert_one(record, None)?;
                 Ok(())
             },
             |_| {
@@ -229,7 +230,8 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
     type Node = MerkleRecord;
 
     fn construct(addr: Self::Id, root: Self::Root) -> Self {
-        let client = tokio::runtime::Handle::current().block_on(Client::with_uri_str(MONGODB_URI)).expect("Unexpected DB Error");
+
+        let client = Client::with_uri_str(MONGODB_URI).expect("Unexpected DB Error");
         MongoMerkle {
             client,
             contract_address: addr,
@@ -270,12 +272,12 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
             hash: *hash,
         };
         //println!("set_node_with_hash {} {:?}", index, hash);
-        tokio::runtime::Handle::current().block_on(self.update_record(record)).expect("Unexpected DB Error");
+        self.update_record(record).expect("Unexpected DB Error");
         Ok(())
     }
 
     fn get_node_with_hash(&self, index: u32, hash: &[u8; 32]) -> Result<Self::Node, MerkleError> {
-        let v = tokio::runtime::Handle::current().block_on(self.get_record(index, hash)).expect("Unexpected DB Error");
+        let v = self.get_record(index, hash).expect("Unexpected DB Error");
         //println!("get_node_with_hash {} {:?} {:?}", index, hash, v);
         let height = (index + 1).ilog2();
         v.map_or(
@@ -307,7 +309,7 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
 
     fn set_leaf(&mut self, leaf: &MerkleRecord) -> Result<(), MerkleError> {
         self.boundary_check(leaf.index())?; //should be leaf check?
-        tokio::runtime::Handle::current().block_on(self.update_record(leaf.clone())).expect("Unexpected DB Error");
+        self.update_record(leaf.clone()).expect("Unexpected DB Error");
         Ok(())
     }
 }
