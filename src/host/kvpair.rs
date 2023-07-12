@@ -2,7 +2,6 @@ use super::MONGODB_URI;
 use crate::host::merkle::{MerkleError, MerkleErrorCode, MerkleNode, MerkleTree};
 use crate::host::poseidon::gen_hasher;
 use ff::PrimeField;
-use futures::executor;
 use halo2_proofs::pairing::bn256::Fr;
 use lazy_static;
 use mongodb::bson::{spec::BinarySubtype, Bson};
@@ -230,7 +229,7 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
     type Node = MerkleRecord;
 
     fn construct(addr: Self::Id, root: Self::Root) -> Self {
-        let client = executor::block_on(Client::with_uri_str(MONGODB_URI)).expect("Unexpected DB Error");
+        let client = tokio::runtime::Handle::current().block_on(Client::with_uri_str(MONGODB_URI)).expect("Unexpected DB Error");
         MongoMerkle {
             client,
             contract_address: addr,
@@ -271,12 +270,12 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
             hash: *hash,
         };
         //println!("set_node_with_hash {} {:?}", index, hash);
-        executor::block_on(self.update_record(record)).expect("Unexpected DB Error");
+        tokio::runtime::Handle::current().block_on(self.update_record(record)).expect("Unexpected DB Error");
         Ok(())
     }
 
     fn get_node_with_hash(&self, index: u32, hash: &[u8; 32]) -> Result<Self::Node, MerkleError> {
-        let v = executor::block_on(self.get_record(index, hash)).expect("Unexpected DB Error");
+        let v = tokio::runtime::Handle::current().block_on(self.get_record(index, hash)).expect("Unexpected DB Error");
         //println!("get_node_with_hash {} {:?} {:?}", index, hash, v);
         let height = (index + 1).ilog2();
         v.map_or(
@@ -308,7 +307,7 @@ impl MerkleTree<[u8; 32], 20> for MongoMerkle {
 
     fn set_leaf(&mut self, leaf: &MerkleRecord) -> Result<(), MerkleError> {
         self.boundary_check(leaf.index())?; //should be leaf check?
-        executor::block_on(self.update_record(leaf.clone())).expect("Unexpected DB Error");
+        tokio::runtime::Handle::current().block_on(self.update_record(leaf.clone())).expect("Unexpected DB Error");
         Ok(())
     }
 }
